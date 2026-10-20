@@ -2,6 +2,8 @@
 
 This is a deployment plan, not evidence of production deployment. The build and tests run without cloud credentials. Do not deploy to a different service, create an account, widen sharing, generate credentials or enable paid resources as part of these steps.
 
+For the separately approved new Cloudflare Free owner-only Worker/D1 path, use [the native variant plan](deploy/cloudflare/README.md). That plan preserves the current Site until a verified private backup, new-database validation and authorized cutover. It does not reuse the Sites testing credential or the platform-attestation-only HTTP boundary.
+
 ## Prerequisites and current boundary
 
 1. Identify the existing Site through the authorized Sites connection. Confirm the current user is its owner, its audience remains owner-only, and the same Worker and D1 binding will be updated. Keep the Site ID, private URL and hosting metadata outside the public repository.

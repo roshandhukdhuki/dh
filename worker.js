@@ -5,12 +5,22 @@ import {LabStore} from './lib/store.js';
 import {providerStatus} from './lib/namecheap.js';
 import {runTick} from './lib/engine.js';
 import {candidates} from './lib/candidates.js';
+import {executionProfile} from './lib/profiles.js';
 
 export {cleanMeaning, normalize, validReview, suggestedDefinition};
 
 const responseJson = (data, status = 200) => new Response(JSON.stringify(data), {status,headers:{
   'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',
   'Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; frame-ancestors 'self'"}});
+function schedulerDescription(control,env,now){
+  const enabled=env.SCHEDULER_ENABLED==='true',recent=!!control.last_scheduled_at&&now-Date.parse(control.last_scheduled_at)<3*CADENCE_MS;
+  const external=!!control.last_external_tick_at&&now-Date.parse(control.last_external_tick_at)<15*60000;
+  return {enabled,paused:!!control.paused,cadenceMs:CADENCE_MS,scheduledEventObservedRecently:recent,
+    status:!enabled?'not_enabled':control.paused?'paused':recent?'recent_scheduled_event':external?'recent_external_request':'schedule_not_verified',
+    lastScheduledEvent:control.last_scheduled_at,nextEligibleAt:control.paused||!enabled?null:new Date(Math.max(now,control.next_run_at)).toISOString(),
+    lastExternalRequest:control.last_external_tick_at,lastExternalEvent:control.last_external_event,
+    note:'Next eligible time is an estimate. A received scheduled event confirms only that the cron invoked this Worker.'};
+}
 
 function privateDeployment(env, url) {
   if (env.LOCAL_DEV === 'true' && url && ['localhost','127.0.0.1','[::1]'].includes(url.hostname)) return true;
@@ -92,21 +102,19 @@ export function createWorker({html = '', client = '', clock = Date.now, fetcher 
               (SELECT COUNT(DISTINCT domain) FROM meanings WHERE accepted=1) AS verified,
               (SELECT COUNT(*) FROM reviews WHERE decision='pending') AS pending_reviews`).first()
           ]);
-          const enabled = env.SCHEDULER_ENABLED === 'true';
-          const recent = !!control.last_scheduled_at && now - Date.parse(control.last_scheduled_at) < 3 * CADENCE_MS;
-          const recentExternal=!!control.last_external_tick_at&&now-Date.parse(control.last_external_tick_at)<15*60_000;
           return responseJson({control,sources,jobs,events,engineRuns:runs,reviews:reviews.map(r => ({...r,
             suggested_definition:r.definition || suggestedDefinition(r.meaning)})),history,totals,
             provider:providerStatus(env,control.availability_enabled),serverTime:new Date(now).toISOString(),
-            scheduler:{enabled,paused:!!control.paused,cadenceMs:CADENCE_MS,scheduledEventObservedRecently:recent,
-              status:!enabled ? 'not_enabled' : control.paused ? 'paused' : recent ? 'recent_scheduled_event' : recentExternal?'recent_external_request':'schedule_not_verified',
-              lastScheduledEvent:control.last_scheduled_at,nextEligibleAt:control.paused || !enabled ? null : new Date(Math.max(now,control.next_run_at)).toISOString(),
-              lastExternalRequest:control.last_external_tick_at,lastExternalEvent:control.last_external_event,
-              note:'Next eligible time is an estimate. A received scheduled event confirms only that the cron invoked this Worker.'}});
+            usage:executionProfile(env).dailyTickCap?await store.dailyUsage(now):null,
+            executionProfile:executionProfile(env),scheduler:schedulerDescription(control,env,now)});
         }
-        if(path==='/api/engine/status'&&request.method==='GET')return responseJson({control:await store.control(),
-          runs:await store.all('SELECT id,trigger,request_id,started_at,finished_at,status,jobs_completed,error_code FROM engine_runs ORDER BY started_at DESC LIMIT 5'),
-          provider:providerStatus(env,(await store.control()).availability_enabled)});
+        if(path==='/api/engine/status'&&request.method==='GET'){
+          const control=await store.control();
+          return responseJson({control,runs:await store.all('SELECT id,trigger,request_id,started_at,finished_at,status,jobs_completed,error_code FROM engine_runs ORDER BY started_at DESC LIMIT 5'),
+            sources:await store.sources(),jobs:await store.all('SELECT * FROM jobs ORDER BY updated_at DESC,id LIMIT 10'),
+            usage:executionProfile(env).dailyTickCap?await store.dailyUsage(now):null,
+            provider:providerStatus(env,control.availability_enabled),executionProfile:executionProfile(env),scheduler:schedulerDescription(control,env,now)});
+        }
         if(path==='/api/batches'&&request.method==='GET')return responseJson({batches:await store.batches(now)});
         if (path === '/api/candidates' && request.method === 'GET') return responseJson(await candidates(store,url.searchParams,now));
         if (path === '/api/provider' && request.method === 'GET') return responseJson(providerStatus(env,(await store.control()).availability_enabled));

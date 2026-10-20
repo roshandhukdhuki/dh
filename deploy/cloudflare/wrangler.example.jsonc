@@ -1,0 +1,27 @@
+{
+  // Review template only. Keep the existing Site canonical until the authorized, validated cutover.
+  "name": "artha-native-review",
+  "main": "../../dist/cloudflare/index.js",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "triggers": { "crons": ["*/4 * * * *"] },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "REPLACE_WITH_APPROVED_NEW_PRIVATE_D1_NAME",
+    "database_id": "REPLACE_WITH_APPROVED_NEW_PRIVATE_D1_ID",
+    "migrations_dir": "../../drizzle"
+  }],
+  "vars": {
+    "RUN_PROFILE": "cloudflare-free",
+    "SCHEDULER_ENABLED": "false",
+    "EXTERNAL_SCHEDULER_ENABLED": "false",
+    "CLOUDFLARE_PRIVATE_READY": "false",
+    "CF_APP_ORIGIN": "",
+    "CF_ACCESS_TEAM": "",
+    "CF_ACCESS_AUD": "",
+    "CF_ACCESS_OWNER_EMAIL": "",
+    "CF_ACCESS_OWNER_SUB": ""
+  }
+}

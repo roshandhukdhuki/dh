@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {LocalD1,migrateLocal} from '../scripts/sqlite.mjs';
 import {LabStore} from '../lib/store.js';
-import {TEST_NOW} from './helpers.mjs';
+import {TEST_NOW,acceptedWord} from './helpers.mjs';
 
 test('all journaled migrations apply to a fresh SQLite database in order',async()=>{
   const db=new LocalD1();migrateLocal(db);
   const control=await new LabStore(db).control();assert.equal(control.paused,1);assert.equal(control.availability_enabled,0);
-  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS n FROM local_migration_journal').get().n,7);
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS n FROM local_migration_journal').get().n,8);
   assert.equal(db.sqlite.prepare('PRAGMA foreign_key_check').all().length,0);db.close();
 });
 test('upgrade preserves existing observations, favorites, rejection reasons, reviews and manual leases',()=>{
@@ -47,4 +47,16 @@ test('upgrade from the standalone visible batch fix preserves active/released st
   const replay=await store.reserveBatch(1,active,TEST_NOW+1);assert.equal(replay.batch_id,active);assert.equal(replay.words.length,1);
   assert.equal((await store.stmt('SELECT COUNT(*) AS n FROM leases').first()).n,1);
   assert.equal((await store.stmt('SELECT COUNT(*) AS n FROM manual_batches').first()).n,2);db.close();
+});
+test('native budget migration preserves the paused engine, pending jobs and accepted evidence',async()=>{
+  const db=new LocalD1();migrateLocal(db,{through:6});const store=new LabStore(db);
+  await acceptedWord(store);
+  await store.stmt("UPDATE engine_control SET epoch=4,next_run_at=123456").run();
+  await store.stmt("INSERT INTO jobs(id,kind,source,payload,status,created_at,updated_at) VALUES('migration-job','dictionary','nepali','{}','queued','fixture-time','fixture-time')").run();
+  const before=await store.control(),jobs=await store.all('SELECT * FROM jobs'),meanings=await store.all('SELECT * FROM meanings');
+  migrateLocal(db);assert.deepEqual(await store.control(),before);assert.deepEqual(await store.all('SELECT * FROM jobs'),jobs);
+  assert.deepEqual(await store.all('SELECT * FROM meanings'),meanings);
+  assert.deepEqual(await store.dailyUsage(TEST_NOW),{day:new Date(TEST_NOW).toISOString().slice(0,10),ticks:0});
+  await store.reserveDailyTick(TEST_NOW,360);migrateLocal(db);assert.equal((await store.dailyUsage(TEST_NOW)).ticks,1);
+  db.close();
 });
