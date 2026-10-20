@@ -175,7 +175,7 @@ export function createWorker({html = '', client = '', clock = Date.now, fetcher 
         }
         if (path === '/api/next-batch') {
           const count = body.count ?? 20;
-          if (!Number.isInteger(count) || count < 1 || count > 20||!/^[-a-f0-9]{36}$/.test(body.request_id)) return responseJson({error:'invalid_batch_count_or_request_id'},400);
+          if (!Number.isInteger(count) || count < 1 || count > 20||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(body.request_id)) return responseJson({error:'invalid_batch_count_or_request_id'},400);
           return responseJson(await store.reserveBatch(count,body.request_id,now));
         }
         if(path==='/api/batches/release') {

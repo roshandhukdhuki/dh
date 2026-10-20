@@ -1,4 +1,7 @@
-let view = {state:null,words:[],offset:0,nextOffset:null,total:0,batches:[],selectedBatch:sessionStorage.getItem('artha.selectedBatch')||''};
+let view = {state:null,words:[],offset:0,nextOffset:null,total:0,batches:[],selectedBatch:sessionStorage.getItem('artha.selectedBatch')||sessionStorage.getItem('artha.manualBatch')||''};
+if(!sessionStorage.getItem('artha.pendingBatch')&&sessionStorage.getItem('artha.pendingManualBatch')){
+  sessionStorage.setItem('artha.pendingBatch',sessionStorage.getItem('artha.pendingManualBatch'));sessionStorage.removeItem('artha.pendingManualBatch');
+}
 let searchTimer, queryVersion = 0;
 const $ = id => document.getElementById(id);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -35,3 +35,16 @@ test('migration failures roll back atomically rather than leaving half an upgrad
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='engine_control'").get().n,0);
   migrateLocal(db);assert.equal(db.sqlite.prepare('SELECT paused FROM engine_control').get().paused,1);db.close();
 });
+test('upgrade from the standalone visible batch fix preserves active/released state and idempotency IDs',async()=>{
+  const db=new LocalD1();migrateLocal(db,{through:5});const active=crypto.randomUUID(),released=crypto.randomUUID();
+  const stamp=new Date(TEST_NOW).toISOString(),expires=new Date(TEST_NOW+12*60000).toISOString();
+  db.sqlite.prepare("INSERT INTO words(domain,word,meaning,language,source,fetched) VALUES('tree.com','tree','A woody plant','English','https://en.wiktionary.org/wiki/tree',?)").run(stamp);
+  db.sqlite.prepare('INSERT INTO leases VALUES(?,?,?)').run('tree.com',active,expires);
+  for(const id of [active,released])db.sqlite.prepare("INSERT INTO history(happened,action,detail) VALUES(?,'Batch reserved',?)").run(stamp,id+'|'+JSON.stringify({expires,count:1,nonce:'test-ledger-nonce'}));
+  db.sqlite.prepare("INSERT INTO history(happened,action,detail) VALUES(?,'Batch released',?)").run(stamp,released+'|'+JSON.stringify({expires}));
+  migrateLocal(db);const store=new LabStore(db);
+  assert.equal((await store.stmt('SELECT state FROM manual_batches WHERE id=?',released).first()).state,'released');
+  const replay=await store.reserveBatch(1,active,TEST_NOW+1);assert.equal(replay.batch_id,active);assert.equal(replay.words.length,1);
+  assert.equal((await store.stmt('SELECT COUNT(*) AS n FROM leases').first()).n,1);
+  assert.equal((await store.stmt('SELECT COUNT(*) AS n FROM manual_batches').first()).n,2);db.close();
+});

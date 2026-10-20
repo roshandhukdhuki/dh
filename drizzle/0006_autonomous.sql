@@ -45,6 +45,21 @@ CREATE TABLE external_invocations (request_id TEXT PRIMARY KEY, received_at TEXT
 CREATE TABLE manual_batches (id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL,
   expires TEXT NOT NULL, requested_count INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'active', released_at TEXT);
 --> statement-breakpoint
+-- Preserve reservations made by the standalone visible-control upgrade, which used the existing history ledger.
+WITH ledger AS (
+  SELECT substr(detail,1,36) AS batch_id,happened,action,
+    CASE WHEN json_valid(substr(detail,38)) THEN substr(detail,38) ELSE '{}' END AS payload
+  FROM history WHERE action IN ('Batch reserved','Batch released') AND substr(detail,37,1)='|'
+)
+INSERT OR IGNORE INTO manual_batches(id,request_id,created_at,expires,requested_count,state,released_at)
+SELECT batch_id,batch_id,MIN(happened),MAX(json_extract(payload,'$.expires')),
+  COALESCE(MAX(CASE WHEN json_extract(payload,'$.count') BETWEEN 1 AND 20 THEN json_extract(payload,'$.count') END),0),
+  CASE WHEN SUM(CASE WHEN action='Batch released' THEN 1 ELSE 0 END)>0 THEN 'released' ELSE 'active' END,
+  MIN(CASE WHEN action='Batch released' THEN happened END)
+FROM ledger WHERE length(batch_id)=36 AND batch_id NOT GLOB '*[^a-f0-9-]*'
+  AND typeof(json_extract(payload,'$.expires'))='text' AND julianday(json_extract(payload,'$.expires')) IS NOT NULL
+GROUP BY batch_id;
+--> statement-breakpoint
 CREATE TABLE dictionary_entries (
   id TEXT PRIMARY KEY, source TEXT NOT NULL, page_id INTEGER NOT NULL, revision_id INTEGER NOT NULL,
   native TEXT NOT NULL, language TEXT NOT NULL, definition TEXT NOT NULL, raw_excerpt TEXT NOT NULL,
