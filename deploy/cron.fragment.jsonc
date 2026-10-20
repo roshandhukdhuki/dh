@@ -1,0 +1,6 @@
+{
+  // Configuration fragment for the EXISTING authorized Cloudflare Worker only.
+  // This is not a standalone project or a verified Sites manifest capability.
+  // Preserve existing routes, private access and DB binding; verify quotas first.
+  "triggers": {"crons": ["*/4 * * * *"]}
+}
