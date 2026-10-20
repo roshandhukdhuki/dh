@@ -52,6 +52,8 @@ The local prototype HTML in `local-prototype/static/` is an earlier reference in
 
 Read [DEPLOYMENT.md](DEPLOYMENT.md) before deployment. Reuse the existing private Site, Worker and D1 binding. Apply only pending migrations through the authorized deployment mechanism. Migration `0006_autonomous` adds tables and columns, preserves old records, and starts discovery and provider checking paused. Never reset, replace or seed the live database.
 
+A separate [Cloudflare-native Free variant](deploy/cloudflare/README.md) prepares an owner Access JWT gate, a one-job `*/4` cron and a new D1 upgrade path. It is credential-free and inactive. The existing Site remains canonical until the separately authorized backup, private validation and cutover; real hosted CPU testing is required before any Free-capacity claim. Registrar automation stays disabled in that profile.
+
 A new deployment fails closed until its existing platform authentication gate is confirmed. Do not expose this application on an unauthenticated public route. A scheduled handler alone does not provision a cron. Sites-linked assistant automations are distinct from native Worker cron execution.
 
 Datamuse is not used by the autonomous pipeline and no topic matching is claimed. Sabdasakha and Sanskrit remain disconnected. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and source limitations. Do not commit credentials, deployment metadata, database copies, private research, logs or local environment files.

@@ -36,7 +36,7 @@ function renderOperations() {
     ['Last successful job run',state.control.last_success_at],['Next eligible work',state.scheduler.nextEligibleAt],
     ['Last external request',state.scheduler.lastExternalRequest]]
     .map(([label,value])=>`<p>${label}<br><b>${escapeHtml(utc(value))}</b></p>`).join('');
-  $('engineNote').textContent=state.scheduler.note;
+  $('engineNote').textContent=state.scheduler.note+(state.usage?` Cloudflare Free profile: ${state.usage.ticks}/${state.executionProfile.dailyTickCap} execution attempts on ${state.usage.day} UTC. Registrar automation disabled.`:'');
   $('toggleEngine').textContent=state.scheduler.paused?'Resume discovery':'Pause discovery';
   $('runEngine').disabled=state.scheduler.paused||!state.scheduler.enabled;
   const providerHealth=state.sources.find(s=>s.source==='namecheap');
@@ -90,6 +90,8 @@ function renderReviews() {
 }
 
 async function loadStatus(reviews=true) { view.state=await api('state');renderOperations();if(reviews)renderReviews(); }
+async function loadLightStatus(){if(!view.state)return;const x=await api('engine/status');Object.assign(view.state,
+  {control:x.control,engineRuns:x.runs,sources:x.sources,jobs:x.jobs,provider:x.provider,scheduler:x.scheduler,usage:x.usage});renderOperations();}
 function renderBatchSelection(){
   const batch=view.batches.find(b=>b.id===view.selectedBatch);
   $('batchDomains').value=batch?batch.words.map(w=>w.domain).join('\n'):'';
@@ -134,4 +136,5 @@ $('reserveBatch').onclick=()=>act($('reserveBatch'),async()=>{
 $('releaseBatch').onclick=()=>act($('releaseBatch'),async()=>{await api('batches/release',{batch_id:view.selectedBatch});await loadBatches();message('Batch released. Later reservations can use these names if still due.')});
 $('import').onclick=()=>act($('import'),async()=>{const result=await api('observations',{observations:JSON.parse($('importData').value)});$('importData').value='';message(result.count+' dated observations saved.');await loadAll(false)});
 loadAll().catch(error=>message('Could not load persistent data: '+error.message,true));
-setInterval(()=>{if(!document.hidden)loadStatus(false).catch(error=>message(error.message,true))},30_000);
+const nativeFree=document.querySelector('meta[name="artha-profile"]')?.content==='cloudflare-free';
+setInterval(()=>{if(!document.hidden)(nativeFree?loadLightStatus():loadStatus(false)).catch(error=>message(error.message,true))},nativeFree?60_000:30_000);

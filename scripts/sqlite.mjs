@@ -31,7 +31,7 @@ export class LocalD1 {
   close() { this.sqlite.close(); }
 }
 
-export function migrateLocal(db, {through = 6, root = process.cwd()} = {}) {
+export function migrateLocal(db, {through = 7, root = process.cwd()} = {}) {
   db.sqlite.exec('CREATE TABLE IF NOT EXISTS local_migration_journal(tag TEXT PRIMARY KEY)');
   const journal=JSON.parse(fs.readFileSync(path.join(root,'drizzle/meta/_journal.json'),'utf8'));
   for(const entry of journal.entries.filter(e=>e.idx<=through)) {
