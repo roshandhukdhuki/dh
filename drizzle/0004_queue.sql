@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS leases (domain TEXT PRIMARY KEY, batch_id TEXT NOT NULL, expires TEXT NOT NULL);
