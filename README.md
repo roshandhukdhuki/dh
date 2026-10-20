@@ -14,7 +14,7 @@ Meaning-first .com research dashboard for English and Nepali words. This reposit
 The naming score is a heuristic, not an appraisal, trademark clearance or purchase recommendation. A dictionary definition is not proof of availability. Expiry is not guaranteed deletion. No registrar API, automatic background scheduler, purchase, drop-catching or 24/7 uptime is included. Sanskrit and Sabdasakha are not connected. Nepali source text and romanization require review before promotion.
 
 ## Hosted application
-The existing deployment is owner-private: https://artha-domain-lab.roshan-is.chatgpt.site . Publishing this source does not grant access to its private database or dashboard. The OpenAI authentication gate is enforced by the hosting platform, not this Worker. **Do not deploy the Worker on an unauthenticated public route with personal data.** Configure an appropriate authentication layer before any independent deployment.
+The existing deployment is owner-private; its URL is intentionally omitted from public source. Publishing this source does not grant access to its private database or dashboard. The OpenAI authentication gate is enforced by the hosting platform, not this Worker. **Do not deploy the Worker on an unauthenticated public route with personal data.** Configure an appropriate authentication layer before any independent deployment.
 
 ## Build and test
 Node.js with ES modules, no third-party dependencies:
@@ -40,3 +40,6 @@ On 2026-10-20 the source unit checks and local prototype tests passed. Hosted AP
 
 ## Data and security
 Definitions retain source attribution in `seed.json`. Read `THIRD_PARTY_NOTICES.md` before redistributing dictionary text. No license to third-party trademarks or domains is implied. Never commit credentials, deployment metadata, database snapshots, historical personal datasets or session tokens. No new open-source license grant for application code is asserted by this repository.
+
+## Visible registrar batch workflow
+Use **Reserve next batch** to lease 1–20 names for a visible manual registrar review. **Resume selected batch** reads the saved active lease without reserving more names; **Release selected batch** releases only that batch. Retries use an idempotency ID kept in the browser session. Active, expired and released state is retained in the existing history/lease tables; no migration is needed. No registrar request, purchase or domain reservation is made by these controls. The existing hosting authentication boundary and same-origin write checks remain in place.
