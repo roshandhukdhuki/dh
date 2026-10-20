@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorker} from '../worker.js';
 import {LabStore} from '../lib/store.js';
-import {testEnv,TEST_NOW,apiRequest,word} from './helpers.mjs';
+import {testEnv,TEST_NOW,apiRequest,acceptedWord as word} from './helpers.mjs';
 
 test('manual reservation is private, origin checked and bounded to 1–20 names',async()=>{
   const env=testEnv(),app=createWorker({clock:()=>TEST_NOW});const request_id=crypto.randomUUID();
@@ -33,4 +33,20 @@ test('expired replay cannot reserve additional names, and releasing an old batch
   const second=await store.reserveBatch(1,crypto.randomUUID(),TEST_NOW+13*60_000);assert.equal(second.words.length,1);
   const replay=await store.reserveBatch(1,id,TEST_NOW+13*60_000);assert.equal(replay.state,'expired');assert.equal(replay.words.length,0);
   await store.releaseBatch(first.batch_id,TEST_NOW+14*60_000);assert.equal((await store.stmt('SELECT batch_id FROM leases').first()).batch_id,second.batch_id);env.DB.close();
+});
+
+test('manual reservation excludes rejected sole meanings, legacy entries and blank accepted definitions',async()=>{
+  const env=testEnv(),store=new LabStore(env.DB);
+  await word(store,'arna.com','Nepali');await word(store,'tree.com');await word(store,'void.com');
+  await store.stmt("UPDATE meanings SET accepted=0 WHERE domain='arna.com'").run();
+  await store.stmt("UPDATE meanings SET definition='   ' WHERE domain='void.com'").run();
+  await store.stmt("INSERT INTO words(domain,word,meaning,language,source,fetched) VALUES('past.com','past','Legacy text','English','https://en.wiktionary.org/wiki/past',?)",new Date(TEST_NOW).toISOString()).run();
+  const batch=await store.reserveBatch(20,crypto.randomUUID(),TEST_NOW);assert.deepEqual(batch.words.map(w=>w.domain),['tree.com']);env.DB.close();
+});
+test('another accepted meaning preserves a domain eligibility after one meaning is rejected',async()=>{
+  const env=testEnv(),store=new LabStore(env.DB);await word(store,'arna.com','Nepali');
+  await store.stmt("UPDATE meanings SET accepted=0 WHERE domain='arna.com'").run();
+  await store.stmt(`INSERT INTO meanings(id,domain,language,native,definition,romanization,romanization_status,entry_url,revision_url,retrieved_at,license,origin,accepted,first_seen_at)
+    VALUES('other-sense','arna.com','English','','A second source-backed fixture sense','arna','dictionary_spelling','https://en.wiktionary.org/wiki/arna','https://en.wiktionary.org/wiki/arna?oldid=2',?,'Test fixture','test_fixture',1,?)`,new Date(TEST_NOW).toISOString(),new Date(TEST_NOW).toISOString()).run();
+  assert.equal((await store.reserveBatch(1,crypto.randomUUID(),TEST_NOW)).words[0].domain,'arna.com');env.DB.close();
 });

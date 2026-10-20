@@ -21,3 +21,11 @@ export async function word(store,domain='tree.com',language='English') { await s
   VALUES(?,?,?,?,?,?)`,domain,domain.slice(0,-4),'Synthetic test dictionary definition',language,'https://en.wiktionary.org/wiki/'+domain.slice(0,-4),new Date(TEST_NOW).toISOString()).run(); }
 export function providerXml(rows) { return `<ApiResponse Status="OK"><CommandResponse Type="namecheap.domains.check">${rows}</CommandResponse></ApiResponse>`; }
 export function providerRow(domain,extra='') { return `<DomainCheckResult Domain="${domain}" Available="true" ErrorNo="0" IsPremiumName="false" ${extra}/>`; }
+
+export async function acceptedWord(store,domain='tree.com',language='English'){
+  await word(store,domain,language);
+  await store.stmt(`INSERT INTO meanings(id,domain,language,native,definition,romanization,romanization_status,entry_url,revision_url,
+    retrieved_at,license,origin,accepted,first_seen_at) VALUES(?,?,?,'',?,?,'dictionary_spelling',?,?,?,'Test fixture license','test_fixture',1,?)`,
+    'fixture:'+domain,domain,language,'Synthetic dictionary definition',domain.slice(0,-4),'https://en.wiktionary.org/wiki/'+domain.slice(0,-4),
+    'https://en.wiktionary.org/wiki/'+domain.slice(0,-4)+'?oldid=1',new Date(TEST_NOW).toISOString(),new Date(TEST_NOW).toISOString()).run();
+}
