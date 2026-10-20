@@ -1,0 +1,13 @@
+.openai/
+dist/
+node_modules/
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.db
+*.csv
+__pycache__/
+*.pyc
+dashboard-data.json
+*.log
