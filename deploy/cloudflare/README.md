@@ -12,6 +12,8 @@ Before enabling a hostname, configure a supported [Cloudflare Access application
 
 The Worker independently validates the signed `Cf-Access-Jwt-Assertion` for **every** HTML, script and API request. It verifies RS256, the configured issuer and application audience, expiry, owner email and optional owner subject. It fetches bounded public verification keys only from the configured team's documented certificate URL; public keys are cached. It ignores the unauthenticated email header and never accepts Sites testing/bypass credentials. This follows Cloudflare's [JWT validation guidance](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/). Configuration booleans alone never authorize HTTP requests.
 
+Certificate failures back off per issuer from 30 seconds to five minutes. On HTTP 429/503, a valid numeric or HTTP-date [Retry-After](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.3) extends the next-attempt deadline. Valid cached keys continue only until their original 15-minute expiry; a failed refresh never extends it. Backoff state is isolate-local and resets if the Worker restarts; it is not a distributed provider quota.
+
 | Setting | Required value |
 | --- | --- |
 | `DB` | Binding to the approved **new** private D1, never the canonical Site database. |

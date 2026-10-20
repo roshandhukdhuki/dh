@@ -64,6 +64,59 @@ test('concurrent certificate retrieval never shares a different Access issuer ke
   assert.equal((await verify(otherRequest,{...cfConfig,CF_ACCESS_TEAM:'other-team'})).ok,false);
   resolveFetch(await jwks());assert((await first).ok);
 });
+for(const [label,status,header] of [
+  ['numeric',429,()=>' 3600 '],
+  ['HTTP-date',503,()=>new Date(TEST_NOW+3600000).toUTCString()]
+])test(`certificate ${label} Retry-After prevents early requests and recovers when due`,async()=>{
+  let now=TEST_NOW,calls=0;
+  const verify=createCloudflareAccessVerifier({clock:()=>now,fetcher:async()=>++calls===1?
+    new Response('',{status,headers:{'Retry-After':header()}}):jwks()});
+  const request=await ownerRequest('state',undefined,{exp:TEST_NOW/1000+86400});
+  assert.equal((await verify(request,cfConfig)).ok,false);assert.equal(calls,1);
+  now=TEST_NOW+31000;assert.equal((await verify(request,cfConfig)).ok,false);
+  now=TEST_NOW+3600000-1;assert.equal((await verify(request,cfConfig)).ok,false);assert.equal(calls,1);
+  now++;assert((await verify(request,cfConfig)).ok);assert.equal(calls,2);
+});
+test('a failed certificate refresh keeps cached keys only until their original expiry',async()=>{
+  let now=TEST_NOW,calls=0;
+  const verify=createCloudflareAccessVerifier({clock:()=>now,fetcher:async()=>++calls===2?
+    new Response('',{status:429,headers:{'Retry-After':'3600'}}):jwks()});
+  const claims={exp:TEST_NOW/1000+86400},request=await ownerRequest('state',undefined,claims);
+  const unknown=apiRequest('state',undefined,{'Cf-Access-Jwt-Assertion':await ownerAssertion(claims,{kid:'unrecognized-key'})});
+  assert((await verify(request,cfConfig)).ok);
+  now+=31000;assert.equal((await verify(unknown,cfConfig)).ok,false);assert.equal(calls,2);
+  now=TEST_NOW+15*60000-1;assert((await verify(request,cfConfig)).ok);assert.equal(calls,2);
+  now++;assert.equal((await verify(request,cfConfig)).ok,false);assert.equal(calls,2);
+  now=TEST_NOW+31000+3600000;assert((await verify(request,cfConfig)).ok);assert.equal(calls,3);
+});
+test('certificate Retry-After deadlines remain scoped to their issuer across other successful fetches',async()=>{
+  let now=TEST_NOW;const urls=[];
+  const verify=createCloudflareAccessVerifier({clock:()=>now,fetcher:async url=>{
+    urls.push(url);return url.startsWith('https://unit-test-team.')?
+      new Response('',{status:429,headers:{'Retry-After':'3600'}}):jwks();
+  }});
+  const first=await ownerRequest('state',undefined,{exp:TEST_NOW/1000+86400});
+  assert.equal((await verify(first,cfConfig)).ok,false);now+=31000;
+  const other=await ownerRequest('state',undefined,{iss:'https://other-team.cloudflareaccess.com'});
+  assert((await verify(other,{...cfConfig,CF_ACCESS_TEAM:'other-team'})).ok);
+  assert.equal((await verify(first,cfConfig)).ok,false);
+  assert.deepEqual(urls,['https://unit-test-team.cloudflareaccess.com/cdn-cgi/access/certs',
+    'https://other-team.cloudflareaccess.com/cdn-cgi/access/certs']);
+});
+test('certificate transport failures and malformed Retry-After use bounded exponential backoff and recover',async()=>{
+  let now=TEST_NOW,calls=0;
+  const verify=createCloudflareAccessVerifier({clock:()=>now,fetcher:async()=>{
+    calls++;if(calls===7)return jwks();
+    if(calls%2===0)return new Response('',{status:503,headers:{'Retry-After':'invalid'}});
+    throw Error('synthetic transport failure');
+  }});
+  const request=await ownerRequest('state',undefined,{exp:TEST_NOW/1000+86400});
+  for(const [i,delay] of [30000,60000,120000,240000,300000,300000].entries()){
+    assert.equal((await verify(request,cfConfig)).ok,false);assert.equal(calls,i+1);
+    now+=delay-1;assert.equal((await verify(request,cfConfig)).ok,false);assert.equal(calls,i+1);now++;
+  }
+  assert((await verify(request,cfConfig)).ok);assert.equal(calls,7);
+});
 test('authenticated routes still enforce origin checks and disable external scheduler and registrar activation',async()=>{
   const env=testEnv({...cfConfig,...TEST_PROVIDER}),app=createCloudflareWorker({jwksFetcher:jwks,clock:()=>TEST_NOW});
   const state=await(await app.fetch(await ownerRequest('state'),env)).json();
