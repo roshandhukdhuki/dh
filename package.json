@@ -1,1 +1,1 @@
-{"name":"artha-domain-lab","type":"module","scripts":{"build":"node build.mjs","test":"node test.mjs && node --test manual-batch.test.mjs"}}
+{"name":"artha-domain-lab","private":true,"type":"module","engines":{"node":">=22.13"},"scripts":{"build":"node build.mjs","test":"node --test tests/*.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py'","dev":"node scripts/dev.mjs"}}

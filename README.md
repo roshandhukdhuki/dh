@@ -1,45 +1,57 @@
 # Artha Domain Lab
 
-Meaning-first .com research dashboard for English and Nepali words. This repository contains the Cloudflare Worker + D1 application and a separate Python local prototype.
+A meaning-first .com research dashboard for Nepali and English. The application targets the existing owner-private Cloudflare Worker + D1 stack. The code includes a persistent scheduled pipeline; **this repository does not establish that a cron is deployed or that registrar access is configured**.
 
-## What works
-- Dictionary-backed 4–10 ASCII letter candidates, length and meaning search.
-- Industry and personal-brand use-case filters, based on transparent keyword matching.
-- Persistent shortlist, shortlist/review/rejected triage stages, rejection reasons, action history and source-review queue.
-- Reviewed Nepali definition and romanization approval/rejection.
-- Persistent D1 batch leases to avoid duplicate checks, with dated observation history.
-- On-demand English Datamuse requests, with English Wiktionary fallback, and small Nepali Wiktionary batches for review.
-- Import of dated, manually verified Namecheap observations. Availability is unknown without an observation.
+## Discovery and research
 
-The naming score is a heuristic, not an appraisal, trademark clearance or purchase recommendation. A dictionary definition is not proof of availability. Expiry is not guaranteed deletion. No registrar API, automatic background scheduler, purchase, drop-catching or 24/7 uptime is included. Sanskrit and Sabdasakha are not connected. Nepali source text and romanization require review before promotion.
+- Nepali first, then English Wiktionary, with small sequential API requests, cursor continuation, exact revisions, attribution, licenses and retrieval timestamps.
+- Genuine definitions and ASCII 4–10-letter domains only, grouped into 4, 5 and 6–10 letters. Dictionary validity is separate from brand suitability.
+- Practical Nepali romanization with method, confidence and explicit automated-rule, assistant or owner provenance. Ambiguous spellings stay pending. Practical spellings are neither standardized nor source-attested.
+- Separate meaning records preserve multilingual collisions. Historical research remains history; loading the dashboard never reimports the seed as fresh discovery.
+- Brand ranking favors short spellings and flags source-marked rare/dated senses and spelling friction. Commonness stays unknown without usage evidence. Pronunciation signals are heuristics. Low-ranked words remain searchable; no automatic shortlist is created.
+- Search, pagination, sorting, industry/persona/use-case explanations, favorites, triage reasons and dated availability history.
 
-## Hosted application
-The existing deployment is owner-private; its URL is intentionally omitted from public source. Publishing this source does not grant access to its private database or dashboard. The OpenAI authentication gate is enforced by the hosting platform, not this Worker. **Do not deploy the Worker on an unauthenticated public route with personal data.** Configure an appropriate authentication layer before any independent deployment.
+The persistent engine has one execution lease, idempotent jobs, bounded runs, retries with backoff and Retry-After, source health, pause/resume, cancellation, audit events and crash recovery. Source cursors and results commit in one fenced transaction. Denied sources stop until explicitly retried after access is resolved. A proposed four-minute Cloudflare cron is provided as a configuration fragment, subject to provider and hosting limits.
+
+An inactive GitHub cloud-runner alternative is also implemented. Its five-minute minimum and possible delays differ from native cron. Activation requires documented production service authentication and explicit approval; temporary Sites test/bypass tokens must not be reused. The visible manual batch control supports bounded reservations, saved lease state, resume and release without registrar requests.
+
+## Availability
+
+The Namecheap adapter implements only the official read-only `namecheap.domains.check` command. It is unconfigured by default and requires approved, eligible API access plus verified whitelisted static IPv4 egress. The dashboard accepts switches, not credentials. Sandbox observations are not production availability.
+
+States distinguish unknown, unavailable, manually observed registered, premium, standard registration offer and transient errors. Missing or malformed results never become offers. The adapter records supplied amounts; it does not invent regular prices, currency or registration terms. `Available=false` is recorded as unavailable, since it does not establish registration. Manual, dated Namecheap observations remain supported. There are no purchases, carts, undocumented registrar endpoints, automated CAPTCHA handling or bulk RDAP checks.
+
+No score is a monetary valuation, trademark clearance or guarantee of availability. Expiry is not guaranteed deletion. Final checkout, taxes and any unsupplied renewal details remain unconfirmed.
 
 ## Build and test
-Node.js with ES modules, no third-party dependencies:
 
-    npm test
-    npm run build
+Node.js 22.13 or later with ES modules and built-in SQLite, plus Python 3 for the optional cloud-runner tests; no third-party packages are needed.
 
-Build emits `dist/server/index.js`. It optionally copies private `.openai/hosting.json` when present; this file is intentionally absent from GitHub. Do not copy secrets or existing hosting identifiers into public source. Hosting setup is not performed by this repository.
+```sh
+npm test
+npm run build
+```
 
-Bind a Cloudflare D1 database as `DB` and apply the SQL files in `drizzle/` in lexical order using your authorized deployment mechanism. The Worker serves its embedded HTML and requires DB for API requests. The seed contains public dictionary evidence, not registrar observations or personal shortlist data.
+Tests use real local SQLite and controlled source/provider responses. They do not query a live registrar or modify a hosted database. Build emits a self-contained `dist/server/index.js` and the additive migration journal. Optional private `.openai/hosting.json` is ignored by Git; no private app URL or hosting identifier is required in this repository.
 
-## Local prototype
-See `local-prototype/README.md`. Python standard library only:
+For an empty local development database with external traffic disabled:
 
-    cd local-prototype
-    python3 -m unittest -v
-    python3 app.py --port 8877
+```sh
+npm run dev
+```
 
-Starts an empty local SQLite database. No original private database, old shortlist, personal watchlist or imported observations are shipped. Collection and observation-import scripts are included, but they do not establish an unattended production feed.
+For a clearly labeled, in-memory fixture preview with no external traffic:
 
-## Verification and limitations
-On 2026-10-20 the source unit checks and local prototype tests passed. Hosted API loading, dictionary refresh, shortlist persistence, invalid import rejection and request cooldown were tested. The owner authentication gate was later resolved and visual filter tests were completed. Four actual Namecheap observations were imported through the UI; a fifth loading result remained unknown. Live observations and private dashboard data are not included in this source archive. Data feeds can deny or rate-limit requests and source failures must remain visible. Stop affected fetches on denial; do not bypass restrictions.
+```sh
+npm run dev -- --fixtures
+```
 
-## Data and security
-Definitions retain source attribution in `seed.json`. Read `THIRD_PARTY_NOTICES.md` before redistributing dictionary text. No license to third-party trademarks or domains is implied. Never commit credentials, deployment metadata, database snapshots, historical personal datasets or session tokens. No new open-source license grant for application code is asserted by this repository.
+The local prototype HTML in `local-prototype/static/` is an earlier reference interface, not the autonomous service. No Python application is included in the tracked prototype directory.
 
-## Visible registrar batch workflow
-Use **Reserve next batch** to lease 1–20 names for a visible manual registrar review. **Resume selected batch** reads the saved active lease without reserving more names; **Release selected batch** releases only that batch. Retries use an idempotency ID kept in the browser session. Active, expired and released state is retained in the existing history/lease tables; no migration is needed. No registrar request, purchase or domain reservation is made by these controls. The existing hosting authentication boundary and same-origin write checks remain in place.
+## Deployment and data preservation
+
+Read [DEPLOYMENT.md](DEPLOYMENT.md) before deployment. Reuse the existing private Site, Worker and D1 binding. Apply only pending migrations through the authorized deployment mechanism. Migration `0006_autonomous` adds tables and columns, preserves old records, and starts discovery and provider checking paused. Never reset, replace or seed the live database.
+
+A new deployment fails closed until its existing platform authentication gate is confirmed. Do not expose this application on an unauthenticated public route. A scheduled handler alone does not provision a cron. Sites-linked assistant automations are distinct from native Worker cron execution.
+
+Datamuse is not used by the autonomous pipeline and no topic matching is claimed. Sabdasakha and Sanskrit remain disconnected. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and source limitations. Do not commit credentials, deployment metadata, database copies, private research, logs or local environment files.

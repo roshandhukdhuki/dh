@@ -1,45 +1,194 @@
-import {listManualBatches,reserveManualBatch,releaseManualBatch,validManualRequest} from './manual-batches.js';
-const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
-export function cleanMeaning(s){return String(s).replace(/\[\[([^\]\|]+)\|([^\]]+)\]\]/g,'$2').replace(/\[\[([^\]]+)\]\]/g,'$1').trim();}
-export function normalize(rows){return rows.filter(x=>/^[a-z]{4,10}$/.test(x.word)&&Array.isArray(x.defs)).map(x=>({domain:x.word+'.com',word:x.word,meaning:x.defs.filter(d=>typeof d==='string').map(d=>cleanMeaning(d.replace(/^[a-z]+\t/,''))).filter(Boolean).join('; ').slice(0,1000)})).filter(x=>x.meaning.length>0);}
-export function validReview(b){return typeof b.word==='string'&&b.word.length>0&&b.word.length<=100&&['approve','reject'].includes(b.action)&&typeof b.note==='string'&&b.note.length<=500&&(b.action==='reject'||(/^[a-z]{4,10}$/.test(b.romanization)&&typeof b.meaning==='string'&&b.meaning.trim().length>=3&&b.meaning.length<=1000&&b.confirmed===true));}
-export function suggestedDefinition(text){const section=String(text).split(/={1,3}\s*नेपाली\s*={1,3}/)[1];if(!section)return '';const meaning=section.split(/={2,5}\s*अर्थ\s*={2,5}/)[1];if(!meaning)return '';return meaning.split(/\n=/)[0].replace(/\[\[([^]|]+)\|([^]]+)\]\]/g,'$2').replace(/\[\[([^]]+)\]\]/g,'$1').replace(/\{\{[^}]*\}\}/g,'').replace(/^[#*:]+\s*/gm,'').trim().slice(0,1000);}
-async function upstream(url){const r=await fetch(url,{headers:{'User-Agent':'ArthaDomainLab/1.0 (dictionary research; bounded queries)'},signal:AbortSignal.timeout(15000)});if(!r.ok)throw new Error('Source returned '+r.status);return r.json();}
-export default{async fetch(request,env){const u=new URL(request.url),p=u.pathname;
-if(p==='/'&&request.method==='GET')return new Response(HTML,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'self'"}});
-if(!p.startsWith('/api/'))return json({error:'Not found'},404);
-if(!env.DB)return json({error:'Persistent storage not ready'},503);
-if(!['GET','HEAD'].includes(request.method)){if(request.headers.get('origin')&&request.headers.get('origin')!==u.origin||request.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origin rejected'},403);}
-try{
-if(p==='/api/state'&&request.method==='GET'){
-const total=await env.DB.prepare('SELECT COUNT(*) AS n FROM words').first();if(total.n===0){await env.DB.batch(SEED.map(x=>{const source=x.source.match(/https:\/\/[^ ;]+/)?.[0]||'https://datamuse.com/api/';return env.DB.prepare('INSERT OR IGNORE INTO words(domain,word,meaning,language,source,fetched) VALUES (?,?,?,?,?,?)').bind(x.domain,x.domain.slice(0,-4),x.meaning,x.category==='Nepali'?'Nepali':'English',source,x.created)}));}
-const [w,r,n,o,h]=await Promise.all([env.DB.prepare('SELECT * FROM words ORDER BY favorite DESC,fetched DESC,word LIMIT 1500').all(),env.DB.prepare('SELECT * FROM runs').all(),env.DB.prepare('SELECT * FROM reviews ORDER BY fetched DESC LIMIT 100').all(),env.DB.prepare('SELECT * FROM observations').all(),env.DB.prepare('SELECT * FROM history ORDER BY id DESC LIMIT 50').all()]);return json({words:w.results.map(x=>({...x,meaning:cleanMeaning(x.meaning)})),runs:r.results,reviews:n.results.map(x=>({...x,suggested_definition:suggestedDefinition(x.meaning)})),observations:o.results,history:h.results,serverTime:new Date().toISOString(),availability:'Not connected',scheduler:'Refresh on demand. No unattended cloud schedule configured.'});}
-if(p==='/api/batches'&&request.method==='GET')return json({batches:await listManualBatches(env.DB)});
-if(p==='/api/batches/release'&&request.method==='POST'){const b=await request.json();const ok=await releaseManualBatch(env.DB,b.batch_id);return json({ok},ok?200:404);}
-if(p==='/api/next-batch'&&request.method==='POST'){const b=await request.json();if(!validManualRequest(b))return json({error:'Choose 1–20 names and use the visible reservation request ID.'},400);return json(await reserveManualBatch(env.DB,b));}
-if(p==='/api/review'&&request.method==='POST'){
-const b=await request.json();if(!validReview(b))return json({error:'Check the native word, 4–10 lowercase-letter romanization, meaning, and confirmation.'},400);
-const row=await env.DB.prepare('SELECT * FROM reviews WHERE word=?').bind(b.word).first();if(!row)return json({error:'Source entry not found'},404);
-const source=new URL(row.source);if(source.protocol!=='https:'||source.hostname!=='ne.wiktionary.org')return json({error:'Unrecognized dictionary source'},400);
-const now=new Date().toISOString();if(b.action==='reject'){await env.DB.batch([env.DB.prepare("UPDATE reviews SET decision='rejected',review_note=? WHERE word=?").bind(b.note,b.word),env.DB.prepare('INSERT INTO history(happened,action,detail) VALUES (?,?,?)').bind(now,'Dictionary review',b.word+': rejected — '+b.note)]);return json({ok:true,decision:'rejected'});}
-const domain=b.romanization+'.com';const existing=await env.DB.prepare('SELECT native FROM words WHERE domain=?').bind(domain).first();if(existing&&existing.native!==b.word)return json({error:'That domain already has another source word. Choose a different romanization.'},409);
-await env.DB.batch([env.DB.prepare('INSERT INTO words(domain,word,meaning,language,source,fetched,native,source_note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET meaning=excluded.meaning,source=excluded.source,native=excluded.native,source_note=excluded.source_note').bind(domain,b.romanization,b.meaning.trim(),'Nepali',row.source,row.fetched,b.word,'Owner-reviewed meaning and practical romanization, not an official transliteration standard. Wiktionary CC BY-SA. '+b.note),env.DB.prepare("UPDATE reviews SET decision='approved',reviewed_domain=?,review_note=? WHERE word=?").bind(domain,b.note,b.word),env.DB.prepare('INSERT INTO history(happened,action,detail) VALUES (?,?,?)').bind(now,'Dictionary review',b.word+' → '+domain+': owner approved')]);return json({ok:true,decision:'approved',domain});}
-if(p==='/api/triage'&&request.method==='POST'){const b=await request.json();if(!/^[a-z]{4,10}\.com$/.test(b.domain)||!['new','shortlist','watchlist','rejected'].includes(b.triage)||typeof b.reason!=='string'||b.reason.length>500)return json({error:'Invalid triage'},400);await env.DB.batch([env.DB.prepare('UPDATE words SET triage=?,reason=?,favorite=? WHERE domain=?').bind(b.triage,b.reason,b.triage==='shortlist'?1:0,b.domain),env.DB.prepare('INSERT INTO history(happened,action,detail) VALUES (?,?,?)').bind(new Date().toISOString(),'Triage',b.domain+': '+b.triage+' — '+b.reason)]);return json({ok:true});}
-if(p==='/api/observations'&&request.method==='POST'){
-if(Number(request.headers.get('content-length'))>100000)return json({error:'Import too large'},413);
-const b=await request.json(),rows=b.observations;if(!Array.isArray(rows)||rows.length>100)return json({error:'Maximum 100 observations'},400);
-for(const x of rows){let source;try{source=new URL(x.source_url)}catch{return json({error:'Invalid source'},400)}if(!/^[a-z]{4,10}\.com$/.test(x.domain)||!['available','registered','unavailable','premium','unknown'].includes(x.status)||!Number.isFinite(Date.parse(x.checked_at))||Date.parse(x.checked_at)>Date.now()+60000||!/(Z|[+-]\d{2}:\d{2})$/.test(x.checked_at)||source.protocol!=='https:'||!['namecheap.com','www.namecheap.com'].includes(source.hostname)||typeof x.evidence!=='string'||x.evidence.length>2000)return json({error:'Invalid observation or evidence'},400);}
-if(rows.length)await env.DB.batch(rows.flatMap(x=>[env.DB.prepare('INSERT INTO observations VALUES (?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at,source_url=excluded.source_url,evidence=excluded.evidence WHERE excluded.checked_at > observations.checked_at').bind(x.domain,x.status,new Date(x.checked_at).toISOString(),x.source_url,x.evidence),env.DB.prepare('DELETE FROM leases WHERE domain=?').bind(x.domain),env.DB.prepare('INSERT INTO history(happened,action,detail) VALUES (?,?,?)').bind(new Date().toISOString(),'Registrar observation',x.domain+': '+x.status+' observed '+new Date(x.checked_at).toISOString()+'; '+x.source_url+'; '+x.evidence)]));return json({ok:true,count:rows.length});}
-if(p==='/api/favorite'&&request.method==='POST'){const b=await request.json();if(!/^[a-z]{4,10}\.com$/.test(b.domain)||typeof b.favorite!=='boolean')return json({error:'Invalid favorite'},400);await env.DB.prepare('UPDATE words SET favorite=? WHERE domain=?').bind(+b.favorite,b.domain).run();return json({ok:true});}
-if(p==='/api/refresh'&&request.method==='POST'){
-const b=await request.json(),source=b.source==='nepali'?'nepali':'english';const last=await env.DB.prepare('SELECT checked FROM runs WHERE source=?').bind(source).first();if(last&&Date.now()-Date.parse(last.checked)<60000)return json({error:'Please wait 60 seconds between source requests.'},429);
-const now=new Date().toISOString();await env.DB.prepare('INSERT OR REPLACE INTO runs VALUES (?,?,?)').bind(source,now,'Fetching').run();
-try{let count=0;
-if(source==='english'){const q=typeof b.topic==='string'?b.topic.trim().slice(0,40):'nature';if(q&&!/^[a-zA-Z ]{1,40}$/.test(q))return json({error:'Use a short English topic.'},400);const url='https://api.datamuse.com/words?ml='+encodeURIComponent(q||'nature')+'&md=d&max=100';let data;let evidenceUrl=url;try{data=normalize(await upstream(url));}catch(e){
-const fallback='https://en.wiktionary.org/w/api.php?action=query&format=json&generator=random&grnnamespace=0&grnlimit=40&prop=revisions%7Cinfo&rvprop=content&rvslots=main&inprop=url&maxlag=5';const raw=await upstream(fallback);if(raw.error)throw Error('English fallback: '+raw.error.code);data=[];for(const page of Object.values(raw.query?.pages||{})){if(!/^[a-z]{4,10}$/.test(page.title))continue;const text=page.revisions?.[0]?.slots?.main?.['*']||'';const section=text.split(/==English==/)[1]?.split(/\n==[^=]/)[0];if(!section)continue;const lines=section.split('\n').filter(x=>/^# [^:*#]/.test(x));const definition=lines.map(x=>x.slice(2).replace(/\{\{[^}]*\}\}/g,'').replace(/\[\[([^]|]+)\|([^]]+)\]\]/g,'$2').replace(/\[\[([^]]+)\]\]/g,'$1').replace(/'{2,}/g,'').trim()).find(x=>x.length>15&&!/[{}<>]/.test(x));if(definition)data.push({domain:page.title+'.com',word:page.title,meaning:cleanMeaning(definition).slice(0,1000),source:page.fullurl});}evidenceUrl='https://en.wiktionary.org/';
-}if(data.length)await env.DB.batch(data.map(x=>env.DB.prepare('INSERT INTO words(domain,word,meaning,language,source,fetched) VALUES (?,?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET meaning=excluded.meaning,source=excluded.source,fetched=excluded.fetched WHERE words.language=excluded.language').bind(x.domain,x.word,x.meaning,'English',x.source||evidenceUrl,now)));count=data.length;}
-else{const url='https://ne.wiktionary.org/w/api.php?action=query&format=json&generator=random&grnnamespace=0&grnlimit=10&prop=revisions%7Cinfo&rvprop=content%7Ctimestamp%7Cids&rvslots=main&inprop=url&maxlag=5';const data=await upstream(url);if(data.error)throw new Error('Wiktionary: '+data.error.code);const pages=Object.values(data.query?.pages||{});const rows=pages.filter(x=>/[\u0900-\u097f]/.test(x.title)).map(x=>({word:x.title,meaning:(x.revisions?.[0]?.slots?.main?.['*']||'').slice(0,1800),source:(x.fullurl||'https://ne.wiktionary.org/wiki/'+encodeURIComponent(x.title))+(x.revisions?.[0]?.revid?'?oldid='+x.revisions[0].revid:'')}));if(rows.length)await env.DB.batch(rows.map(x=>env.DB.prepare("INSERT INTO reviews(word,meaning,source,fetched) VALUES (?,?,?,?) ON CONFLICT(word) DO UPDATE SET meaning=excluded.meaning,source=excluded.source,fetched=excluded.fetched WHERE reviews.decision='pending'").bind(x.word,x.meaning,x.source,now)));count=rows.length;}
-await env.DB.batch([env.DB.prepare('UPDATE runs SET detail=? WHERE source=?').bind(count+' source entries fetched',source),env.DB.prepare('INSERT INTO history(happened,action,detail) VALUES (?,?,?)').bind(now,'Source refresh',source+': '+count+' entries; topic '+String(b.topic||'random'))]);return json({ok:true,count,fetched:now,source});}
-catch(e){await env.DB.prepare('UPDATE runs SET detail=? WHERE source=?').bind(String(e.message).slice(0,180),source).run();return json({error:String(e.message).slice(0,180)},502);}}
-return json({error:'Not found'},404);
-}catch(e){console.error('Artha API',e.message);return json({error:'Request failed. Please retry shortly.'},500);}}};
+import {DOMAIN_PATTERN, CADENCE_MS, STALE_MS, PipelineError, cleanMeaning, normalize, validReview, plainDefinition,
+  safeHttpsUrl, safeError, validateImport, boundedText, stableId} from './lib/safety.js';
+import {suggestedDefinition} from './lib/dictionary.js';
+import {LabStore} from './lib/store.js';
+import {providerStatus} from './lib/namecheap.js';
+import {runTick} from './lib/engine.js';
+import {candidates} from './lib/candidates.js';
+
+export {cleanMeaning, normalize, validReview, suggestedDefinition};
+
+const responseJson = (data, status = 200) => new Response(JSON.stringify(data), {status,headers:{
+  'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',
+  'Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; frame-ancestors 'self'"}});
+
+function privateDeployment(env, url) {
+  if (env.LOCAL_DEV === 'true' && url && ['localhost','127.0.0.1','[::1]'].includes(url.hostname)) return true;
+  // Set this attestation only after verifying the existing platform's owner-only authentication gate.
+  // Request headers are never accepted as proof of identity. The default deployment fails closed.
+  return env.ACCESS_MODE === 'platform' && env.PRIVATE_DEPLOYMENT_CONFIRMED === 'true';
+}
+
+async function requestBody(request) {
+  if (!request.headers.get('content-type')?.startsWith('application/json')) throw new PipelineError('json_required',{retryable:false});
+  try {
+    const body = JSON.parse(await boundedText(request, 100_000));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw Error();
+    return body;
+  } catch (error) { if (error instanceof PipelineError) throw error; throw new PipelineError('invalid_json',{retryable:false}); }
+}
+
+async function submitReview(store,body,now) {
+  if (!validReview(body) || !['owner','assistant'].includes(body.reviewer)
+      || (body.action === 'approve' && (typeof body.method !== 'string' || !body.method.trim() || body.method.length > 200
+        || body.note.trim().length < 5 || !Number.isFinite(body.confidence) || body.confidence < 0.9 || body.confidence > 1))) {
+    return responseJson({error:'explicit_reviewer_method_confidence_and_source_review_required'},400);
+  }
+  const review = await store.stmt('SELECT * FROM reviews WHERE word=?',body.word).first();
+  if (!review) return responseJson({error:'source_entry_not_found'},404);
+  if (body.action === 'reject') {
+    await store.db.batch([store.stmt("UPDATE reviews SET decision='rejected',review_note=?,reviewer_type=? WHERE word=?",body.note,body.reviewer,body.word),
+      store.stmt("UPDATE meanings SET accepted=0 WHERE language='Nepali' AND native=?",body.word),
+      store.stmt("INSERT INTO job_events(happened,action,detail) VALUES(?,'dictionary_rejected',?)",new Date(now).toISOString(),`${body.word}; reviewer=${body.reviewer}; ${body.note}`)]);
+    return responseJson({ok:true,decision:'rejected',reviewer:body.reviewer});
+  }
+  const entry = await store.stmt("SELECT * FROM dictionary_entries WHERE id=? AND eligible=1 AND source='nepali'",review.entry_id).first();
+  if (!entry || !entry.definition || !safeHttpsUrl(entry.revision_url,['ne.wiktionary.org'],p => p.startsWith('/wiki/'))) {
+    return responseJson({error:'structured_source_revision_required',note:'Fetch historical review entries with exact revision provenance before promotion.'},409);
+  }
+  const meaning = {...entry,domain:body.romanization+'.com',romanization:body.romanization,
+    definition:entry.definition,reviewed_definition:plainDefinition(body.meaning),romanization_status:body.reviewer+'_reviewed_practical',
+    romanization_method:body.method,romanization_confidence:body.confidence,review_actor:body.reviewer,
+    review_note:body.note.trim(),origin:'dictionary_review'};
+  meaning.id = await stableId(meaning.domain,meaning.language,meaning.native,meaning.entry_url);
+  await store.db.batch([...store.meaningStatements(meaning,{sql:'1',args:[]}),
+    store.stmt("UPDATE reviews SET decision=?,reviewed_domain=?,review_note=?,reviewer_type=?,romanization_suggestion=?,romanization_method=?,romanization_confidence=? WHERE word=?",
+      body.reviewer+'_reviewed',meaning.domain,body.note,body.reviewer,body.romanization,body.method,body.confidence,body.word),
+    store.stmt("INSERT INTO job_events(happened,action,detail) VALUES(?,'dictionary_reviewed',?)",new Date(now).toISOString(),
+      `${body.word} → ${meaning.domain}; reviewer=${body.reviewer}; practical spelling, not standardized or source-attested. ${body.note}`)]);
+  return responseJson({ok:true,domain:meaning.domain,decision:body.reviewer+'_reviewed',reviewer:body.reviewer});
+}
+
+export function createWorker({html = '', client = '', clock = Date.now, fetcher = fetch} = {}) {
+  return {
+    async scheduled(controller, env, ctx) {
+      if (!privateDeployment(env)) return;
+      const work = runTick(env,{trigger:'scheduled',clock,fetcher});
+      if (ctx?.waitUntil) ctx.waitUntil(work);
+      else await work;
+    },
+    async fetch(request,env) {
+      const url = new URL(request.url), path = url.pathname, now = clock();
+      if (!privateDeployment(env,url)) return responseJson({error:'private_deployment_not_confirmed'},503);
+      if (path === '/' && request.method === 'GET') return new Response(html,{headers:{'Content-Type':'text/html; charset=utf-8',
+        'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
+        'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'self'"}});
+      if (path === '/app.js' && request.method === 'GET') return new Response(client,{headers:{'Content-Type':'text/javascript; charset=utf-8',
+        'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+      if (!path.startsWith('/api/')) return responseJson({error:'not_found'},404);
+      if (!env.DB) return responseJson({error:'persistent_storage_unavailable'},503);
+      if (!['GET','POST'].includes(request.method)) return responseJson({error:'method_not_allowed'},405);
+      if (request.method === 'POST' && ((request.headers.get('origin') && request.headers.get('origin') !== url.origin)
+          || request.headers.get('sec-fetch-site') === 'cross-site')) return responseJson({error:'origin_rejected'},403);
+      const store = new LabStore(env.DB);
+      try {
+        if (path === '/api/state' && request.method === 'GET') {
+          const [control,sources,jobs,events,runs,reviews,history,totals] = await Promise.all([
+            store.control(),store.sources(),store.all('SELECT * FROM jobs ORDER BY updated_at DESC,id LIMIT 40'),
+            store.all('SELECT * FROM job_events ORDER BY id DESC LIMIT 60'),store.all('SELECT * FROM engine_runs ORDER BY started_at DESC LIMIT 20'),
+            store.all("SELECT * FROM reviews ORDER BY CASE WHEN decision='pending' THEN 0 ELSE 1 END,fetched DESC LIMIT 60"),
+            store.all('SELECT * FROM history ORDER BY id DESC LIMIT 40'),
+            store.stmt(`SELECT (SELECT COUNT(*) FROM words) AS words,(SELECT COUNT(*) FROM words WHERE favorite=1) AS saved,
+              (SELECT COUNT(DISTINCT domain) FROM meanings WHERE accepted=1) AS verified,
+              (SELECT COUNT(*) FROM reviews WHERE decision='pending') AS pending_reviews`).first()
+          ]);
+          const enabled = env.SCHEDULER_ENABLED === 'true';
+          const recent = !!control.last_scheduled_at && now - Date.parse(control.last_scheduled_at) < 3 * CADENCE_MS;
+          const recentExternal=!!control.last_external_tick_at&&now-Date.parse(control.last_external_tick_at)<15*60_000;
+          return responseJson({control,sources,jobs,events,engineRuns:runs,reviews:reviews.map(r => ({...r,
+            suggested_definition:r.definition || suggestedDefinition(r.meaning)})),history,totals,
+            provider:providerStatus(env,control.availability_enabled),serverTime:new Date(now).toISOString(),
+            scheduler:{enabled,paused:!!control.paused,cadenceMs:CADENCE_MS,scheduledEventObservedRecently:recent,
+              status:!enabled ? 'not_enabled' : control.paused ? 'paused' : recent ? 'recent_scheduled_event' : recentExternal?'recent_external_request':'schedule_not_verified',
+              lastScheduledEvent:control.last_scheduled_at,nextEligibleAt:control.paused || !enabled ? null : new Date(Math.max(now,control.next_run_at)).toISOString(),
+              lastExternalRequest:control.last_external_tick_at,lastExternalEvent:control.last_external_event,
+              note:'Next eligible time is an estimate. A received scheduled event confirms only that the cron invoked this Worker.'}});
+        }
+        if(path==='/api/engine/status'&&request.method==='GET')return responseJson({control:await store.control(),
+          runs:await store.all('SELECT id,trigger,request_id,started_at,finished_at,status,jobs_completed,error_code FROM engine_runs ORDER BY started_at DESC LIMIT 5'),
+          provider:providerStatus(env,(await store.control()).availability_enabled)});
+        if(path==='/api/batches'&&request.method==='GET')return responseJson({batches:await store.batches(now)});
+        if (path === '/api/candidates' && request.method === 'GET') return responseJson(await candidates(store,url.searchParams,now));
+        if (path === '/api/provider' && request.method === 'GET') return responseJson(providerStatus(env,(await store.control()).availability_enabled));
+        if (path === '/api/observations' && request.method === 'GET') {
+          const domain = url.searchParams.get('domain');
+          if (!DOMAIN_PATTERN.test(domain)) return responseJson({error:'invalid_domain'},400);
+          return responseJson({observations:await store.all('SELECT * FROM availability_events WHERE domain=? ORDER BY checked_at DESC LIMIT 100',domain)});
+        }
+        if (request.method !== 'POST') return responseJson({error:'not_found'},404);
+        const body = await requestBody(request);
+        if (path === '/api/engine/control') {
+          if (typeof body.paused !== 'boolean' || Object.keys(body).some(k => k !== 'paused')) return responseJson({error:'invalid_control'},400);
+          await store.setPaused(body.paused,now);
+          return responseJson({ok:true,paused:body.paused});
+        }
+        if (path === '/api/engine/run') return responseJson(await runTick(env,{trigger:'manual',clock,fetcher}));
+        if(path==='/api/engine/tick') {
+          if(env.EXTERNAL_SCHEDULER_ENABLED!=='true')return responseJson({error:'external_scheduler_not_enabled'},409);
+          if(!/^\d{1,30}:\d{1,6}$/.test(body.request_id)||!['schedule','workflow_dispatch'].includes(body.event)
+            ||Object.keys(body).some(k=>!['request_id','event'].includes(k)))return responseJson({error:'invalid_external_tick'},400);
+          return responseJson(await runTick(env,{trigger:body.event==='schedule'?'github_schedule':'github_dispatch',requestId:body.request_id,clock,fetcher}));
+        }
+        if (path === '/api/jobs/cancel' || path === '/api/jobs/retry') {
+          if (!/^[a-f0-9]{64}$/.test(body.id)) return responseJson({error:'invalid_job'},400);
+          const ok = path.endsWith('/cancel') ? await store.cancelJob(body.id,now) : await store.retryJob(body.id,now);
+          return responseJson({ok},ok ? 200 : 409);
+        }
+        if (path === '/api/provider') {
+          if (typeof body.enabled !== 'boolean' || Object.keys(body).some(k => k !== 'enabled')) return responseJson({error:'credentials_must_use_deployment_secrets'},400);
+          const provider = providerStatus(env,body.enabled);
+          if (body.enabled && !provider.ready) return responseJson({error:'provider_not_ready',provider},409);
+          await env.DB.batch([store.stmt('UPDATE engine_control SET availability_enabled=? WHERE id=1',+body.enabled),
+            store.stmt('INSERT INTO job_events(happened,action) VALUES(?,?)',new Date(now).toISOString(),body.enabled ? 'provider_enabled' : 'provider_paused')]);
+          return responseJson({ok:true,provider});
+        }
+        if (path === '/api/refresh') {
+          if (!['nepali','english'].includes(body.source)) return responseJson({error:'invalid_source'},400);
+          if (env.SCHEDULER_ENABLED !== 'true') return responseJson({error:'scheduler_not_enabled'},409);
+          const source = await store.stmt('SELECT * FROM source_health WHERE source=?',body.source).first();
+          if (source.status === 'denied') return responseJson({error:'source_access_denied',note:'Resolve access before explicitly retrying the blocked job.'},409);
+          if (source.exhausted) return responseJson({status:'scan_complete',nextScanAt:new Date(source.next_allowed_at).toISOString()});
+          const id = await stableId('dictionary',source.source,source.cycle,source.cursor);
+          await store.stmt(`INSERT OR IGNORE INTO jobs(id,kind,source,payload,status,created_at,updated_at)
+            VALUES(?,'dictionary',?,?,'queued',?,?)`,id,body.source,JSON.stringify({cursor:source.cursor,cycle:source.cycle}),
+            new Date(now).toISOString(),new Date(now).toISOString()).run();
+          return responseJson({status:'queued',job_id:id,topicMatched:false,note:'Dictionary enumeration has no topic-matching claim.'},202);
+        }
+        if (path === '/api/review') return await submitReview(store,body,now);
+        if (path === '/api/observations') {
+          const rows = validateImport(body.observations,now);
+          await store.importObservations(rows,now);
+          return responseJson({ok:true,count:rows.length});
+        }
+        if (path === '/api/triage' || path === '/api/favorite') {
+          if (!DOMAIN_PATTERN.test(body.domain)) return responseJson({error:'invalid_domain'},400);
+          if (!await store.stmt('SELECT domain FROM words WHERE domain=?',body.domain).first()) return responseJson({error:'domain_not_found'},404);
+          if (path.endsWith('favorite')) {
+            if (typeof body.favorite !== 'boolean') return responseJson({error:'invalid_favorite'},400);
+            await store.stmt('UPDATE words SET favorite=? WHERE domain=?',+body.favorite,body.domain).run();
+          } else {
+            if (!['new','shortlist','watchlist','rejected'].includes(body.triage) || typeof body.reason !== 'string' || body.reason.length > 500) return responseJson({error:'invalid_triage'},400);
+            await env.DB.batch([store.stmt('UPDATE words SET triage=?,reason=?,favorite=? WHERE domain=?',body.triage,body.reason,+(body.triage==='shortlist'),body.domain),
+              store.stmt('INSERT INTO history(happened,action,detail) VALUES(?,?,?)',new Date(now).toISOString(),'Triage',`${body.domain}: ${body.triage}; ${body.reason}`)]);
+          }
+          return responseJson({ok:true});
+        }
+        if (path === '/api/next-batch') {
+          const count = body.count ?? 20;
+          if (!Number.isInteger(count) || count < 1 || count > 20||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(body.request_id)) return responseJson({error:'invalid_batch_count_or_request_id'},400);
+          return responseJson(await store.reserveBatch(count,body.request_id,now));
+        }
+        if(path==='/api/batches/release') {
+          if(typeof body.batch_id!=='string'||body.batch_id.length>100)return responseJson({error:'invalid_batch_id'},400);
+          const ok=await store.releaseBatch(body.batch_id,now);return responseJson({ok},ok?200:404);
+        }
+        return responseJson({error:'not_found'},404);
+      } catch (error) {
+        const safe = safeError(error);
+        return responseJson({error:safe.code},safe.code === 'response_too_large' ? 413 : error instanceof PipelineError ? 400 : 500);
+      }
+    }
+  };
+}
+
+export default createWorker({html:typeof HTML === 'string' ? HTML : '',client:typeof CLIENT === 'string' ? CLIENT : ''});

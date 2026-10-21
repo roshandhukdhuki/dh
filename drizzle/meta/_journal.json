@@ -1,1 +1,55 @@
-{"version":"7","dialect":"sqlite","entries":[{"idx":0,"version":"6","when":1792519990000,"tag":"0000_initial","breakpoints":true},{"idx":1,"version":"6","when":1792520400000,"tag":"0001_provenance","breakpoints":true},{"idx":2,"version":"6","when":1792520500000,"tag":"0002_triage","breakpoints":true},{"idx":3,"version":"6","when":1792520640000,"tag":"0003_review_workflow","breakpoints":true},{"idx":4,"version":"6","when":1792520700000,"tag":"0004_queue","breakpoints":true},{"idx":5,"version":"6","when":1792521540000,"tag":"0005_exact_sources","breakpoints":true}]}
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792519990000,
+      "tag": "0000_initial",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792520400000,
+      "tag": "0001_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792520500000,
+      "tag": "0002_triage",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792520640000,
+      "tag": "0003_review_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792520700000,
+      "tag": "0004_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792521540000,
+      "tag": "0005_exact_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792530000000,
+      "tag": "0006_autonomous",
+      "breakpoints": true
+    }
+  ]
+}
